@@ -16,6 +16,7 @@ public partial class App : System.Windows.Application
     private InstanceActivationService? activation;
     private bool updating, exiting;
     private string activeEnginePath = "";
+    private string[] activePasswords = [];
     protected override async void OnStartup(System.Windows.StartupEventArgs e)
     {
         base.OnStartup(e);
@@ -33,7 +34,10 @@ public partial class App : System.Windows.Application
             }
             storage = new SettingsService(); settings = storage.Load<AppSettings>("settings.json");
             activeEnginePath = settings.BandizipPath;
-            var extraction = new ArchiveExtractionService(new BandizipEngine(() => activeEnginePath), new FileRecycleService(), storage);
+            activePasswords = settings.Passwords.Select(p => p.ProtectedValue).ToArray();
+            foreach (var password in activePasswords) _ = PasswordProtection.Unprotect(password);
+            var extraction = new ArchiveExtractionService(new BandizipEngine(() => activeEnginePath,
+                () => activePasswords.Select(PasswordProtection.Unprotect).ToArray()), new FileRecycleService(), storage);
             watcher = new FolderWatcherService(extraction);
             vm = new MainViewModel(settings, extraction.State, () => _ = ApplyAsync(), paused => _ = PauseAsync(paused), () => extraction.ClearHistoryAsync());
             window = new MainWindow { DataContext = vm }; MainWindow = window;
@@ -60,6 +64,7 @@ public partial class App : System.Windows.Application
             settings.Folders = settings.Folders.GroupBy(f => f.Path, StringComparer.OrdinalIgnoreCase).Select(g => g.First()).ToList();
             await watcher.StopAsync(); // stop before committing changed engine/recycle settings
             activeEnginePath = settings.BandizipPath;
+            activePasswords = settings.Passwords.Select(p => p.ProtectedValue).ToArray();
             new AutoStartService().SetEnabled(settings.AutoStart);
             storage.Save("settings.json", settings);
             await watcher.StartAsync(settings);

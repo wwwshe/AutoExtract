@@ -21,6 +21,15 @@ internal static class Program
         var app = new App(); app.InitializeComponent();
         var vm = new MainViewModel(new AppSettings { Folders = [new() { Path = @"D:\다운로드", IncludeSubdirectories = true }, new() { Path = @"C:\Users\사용자\Downloads" }] },
             new AppState { History = [new(@"D:\다운로드\예제.zip", "hash", DateTimeOffset.Now, "성공", "압축 해제 완료", @"D:\다운로드\예제")] }, () => { }, _ => { });
+        if (vm.AddPassword("")) throw new InvalidOperationException("빈 암호 거부 실패");
+        vm.PasswordName = "다운로드용";
+        if (!vm.AddPassword("ui-secret") || vm.AddPassword("ui-secret")) throw new InvalidOperationException("암호 추가/중복 거부 실패");
+        vm.AddPassword("remove-me");
+        vm.SelectedPassword = vm.Passwords[1]; vm.RemovePassword.Execute(null); vm.Save.Execute(null);
+        if (vm.Settings.Passwords.Count != 1 || vm.Settings.Passwords[0].Name != "다운로드용"
+            || PasswordProtection.Unprotect(vm.Settings.Passwords[0].ProtectedValue) != "ui-secret")
+            throw new InvalidOperationException("암호 삭제/설정 저장 실패");
+        Console.WriteLine("PASS saved password add / duplicate / remove / save");
         Console.WriteLine("Loading WPF window and taskbar icon");
         var window = new MainWindow { DataContext = vm, ShowInTaskbar = false, WindowStartupLocation = WindowStartupLocation.Manual, Left = -10000, Top = -10000 };
         Console.WriteLine("Created WPF window; icon width=" + window.Icon.Width);
@@ -40,6 +49,9 @@ internal static class Program
         }
         Render("settings");
         Console.WriteLine("Rendered settings");
+        var settingsScroll = (ScrollViewer)window.FindName("SettingsScroll");
+        settingsScroll.ScrollToEnd(); root.UpdateLayout(); Render("passwords");
+        settingsScroll.ScrollToTop();
         ((TabControl)window.FindName("Tabs")).SelectedIndex = 1; Render("history");
         Console.WriteLine("Rendered history");
         window.AllowClose = true; window.Close();

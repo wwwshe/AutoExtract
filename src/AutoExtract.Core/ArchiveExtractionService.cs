@@ -76,9 +76,7 @@ public sealed class ArchiveExtractionService
             }
             var snapshot = Path.Combine(input, Path.GetFileName(path));
             PreflightZip(snapshot);
-            await engine.TestAsync(snapshot, workspace, token).ConfigureAwait(false);
-            CheckFamily(path, family);
-            await engine.ExtractAsync(snapshot, payload, workspace, token).ConfigureAwait(false);
+            await engine.TestAndExtractAsync(snapshot, payload, workspace, () => CheckFamily(path, family), token).ConfigureAwait(false);
             CheckFamily(path, family);
             if (signature != await ArchiveDetectionService.SignatureAsync(leases, token).ConfigureAwait(false)) throw new IOException("압축 해제 중 원본 변경 감지");
             var copies = new List<SourceLease>();

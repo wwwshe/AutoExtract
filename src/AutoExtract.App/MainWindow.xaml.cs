@@ -4,6 +4,10 @@ namespace AutoExtract.App;
 public partial class MainWindow : System.Windows.Window
 {
     public bool AllowClose { get; set; }
+    private void AddPassword_Click(object sender, System.Windows.RoutedEventArgs e)
+    {
+        if (DataContext is MainViewModel vm && vm.AddPassword(NewPassword.Password)) NewPassword.Clear();
+    }
     public MainWindow()
     {
         InitializeComponent();
@@ -20,6 +24,6 @@ public partial class MainWindow : System.Windows.Window
         image.Freeze();
         Icon = image;
     }
-    protected override void OnClosing(CancelEventArgs e) { if (!AllowClose) { e.Cancel = true; Hide(); } base.OnClosing(e); }
+    protected override void OnClosing(CancelEventArgs e) { NewPassword.Clear(); if (!AllowClose) { e.Cancel = true; Hide(); } base.OnClosing(e); }
     public void ShowSettings(bool history = false) { Tabs.SelectedIndex = history ? 1 : 0; Show(); WindowState = System.Windows.WindowState.Normal; Activate(); }
 }

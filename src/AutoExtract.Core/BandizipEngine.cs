@@ -1,6 +1,6 @@
 namespace AutoExtract.Core;
 
-public sealed class BandizipEngine(Func<string> configuredPath) : IArchiveEngine
+public sealed class BandizipEngine(Func<string> configuredPath, Func<IReadOnlyList<string>>? configuredPasswords = null) : IArchiveEngine
 {
     public static string? FindExecutable(string? configured = null)
     {
@@ -8,12 +8,40 @@ public sealed class BandizipEngine(Func<string> configuredPath) : IArchiveEngine
         return new[] { Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs") }
             .Select(p => Path.Combine(p, "Bandizip", "bz.exe")).FirstOrDefault(File.Exists);
     }
-    public Task TestAsync(string archive, string workspace, CancellationToken token) => InvokeAsync(["t", "-y", "-consolemode:utf8", "-p:", "-", archive], workspace, token);
+    public async Task TestAsync(string archive, string workspace, CancellationToken token) => await FindPasswordAsync(archive, workspace, token).ConfigureAwait(false);
     public async Task ExtractAsync(string archive, string destination, string workspace, CancellationToken token)
     {
-        await InvokeAsync(["l", "-list:s", "-consolemode:utf8", "-p:", "-", archive], workspace, token).ConfigureAwait(false);
+        var password = await FindPasswordAsync(archive, workspace, token).ConfigureAwait(false);
+        await ExtractWithPasswordAsync(archive, destination, workspace, password, token).ConfigureAwait(false);
+    }
+    public async Task TestAndExtractAsync(string archive, string destination, string workspace, Action afterTest, CancellationToken token)
+    {
+        var password = await FindPasswordAsync(archive, workspace, token).ConfigureAwait(false);
+        afterTest();
+        await ExtractWithPasswordAsync(archive, destination, workspace, password, token).ConfigureAwait(false);
+    }
+    private async Task<string> FindPasswordAsync(string archive, string workspace, CancellationToken token)
+    {
+        // Retry only an actual CLI nonzero exit, never cancellation, timeout or sandbox failures.
+        BandizipExitException? last = null;
+        var candidates = new[] { "" }.Concat(configuredPasswords?.Invoke() ?? []).Distinct(StringComparer.Ordinal);
+        foreach (var password in candidates)
+        {
+            token.ThrowIfCancellationRequested();
+            try
+            {
+                await InvokeAsync(["t", "-y", "-consolemode:utf8", "-p:" + password, "-", archive], workspace, token).ConfigureAwait(false);
+                return password;
+            }
+            catch (BandizipExitException error) { last = error; }
+        }
+        throw new InvalidDataException("빈 암호와 저장된 암호로 무결성 검사를 통과하지 못했습니다. 암호 불일치·파일 손상·분할 누락 등을 확인하세요. " + last!.Message);
+    }
+    private async Task ExtractWithPasswordAsync(string archive, string destination, string workspace, string password, CancellationToken token)
+    {
+        await InvokeAsync(["l", "-list:s", "-consolemode:utf8", "-p:" + password, "-", archive], workspace, token).ConfigureAwait(false);
         await PrepareDirectoriesAsync(Path.Combine(workspace, "bz-l.log"), destination, token).ConfigureAwait(false);
-        await InvokeAsync(["x", "-y", "-aou", "-consolemode:utf8", "-p:", "-o:" + destination, "-", archive], workspace, token, destination).ConfigureAwait(false);
+        await InvokeAsync(["x", "-y", "-aou", "-consolemode:utf8", "-p:" + password, "-o:" + destination, "-", archive], workspace, token, destination).ConfigureAwait(false);
     }
     private static async Task PrepareDirectoriesAsync(string listing, string destination, CancellationToken token)
     {
@@ -60,24 +88,11 @@ public sealed class BandizipEngine(Func<string> configuredPath) : IArchiveEngine
             var code = await RestrictedProcess.RunAsync(exe, args, workspace, timeout.Token, logPath, writableDirectory ?? Path.Combine(workspace, "scratch")).ConfigureAwait(false);
             if (code != 0)
             {
-                var detail = ReadLogTail(logPath);
-                throw new InvalidDataException($"반디집 {args[0]} 실패 (종료 코드 {code}). 원본 보존. {detail} | 상세 로그: {logPath}");
+                // Do not copy CLI text into history: it may contain a password or command line.
+                throw new BandizipExitException($"반디집 {args[0]} 실패 (종료 코드 {code}). 원본 보존. 상세 로그: {logPath}");
             }
         }
         catch (OperationCanceledException) when (!token.IsCancellationRequested) { throw new TimeoutException("반디집 응답 제한 시간(12시간) 초과. 원본 보존."); }
     }
-    private static string ReadLogTail(string path)
-    {
-        try
-        {
-            using var file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-            if (file.Length > 16384) file.Seek(-16384, SeekOrigin.End);
-            using var reader = new StreamReader(file, System.Text.Encoding.UTF8);
-            var lines = reader.ReadToEnd().Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
-            var error = lines.Where(line => line.Contains("error", StringComparison.OrdinalIgnoreCase) || line.Contains("fail", StringComparison.OrdinalIgnoreCase) || line.Contains("오류") || line.Contains("실패")).TakeLast(3);
-            var summary = string.Join(" / ", error);
-            return summary.Length > 0 ? summary[..Math.Min(summary.Length, 1200)] : "상세 로그를 확인하세요.";
-        }
-        catch { return "상세 로그 읽기 실패."; }
-    }
+    private sealed class BandizipExitException(string message) : IOException(message);
 }

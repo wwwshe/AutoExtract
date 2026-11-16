@@ -28,6 +28,7 @@ CLI 명령/옵션은 [반디집 공식 명령줄 문서](https://www.bandisoft.c
 | RestrictedProcess | no-capability AppContainer, 작업 ACL, suspended 시작/Job 연결, kill-on-close |
 | FileRecycleService | Windows 휴지통 이동, 영구 삭제 없음 |
 | SettingsService | JSON 원자 교체 저장, 손상 시 fail closed |
+| PasswordProtection | 현재 Windows 계정 범위 DPAPI 암호화/복호화, 설정에는 암호문 저장 |
 | AutoStartService | HKCU Run, 현재 실행 파일 경로 인용 |
 | TrayIconService | NotifyIcon과 한국어 메뉴, 더블클릭 |
 | MainViewModel | WPF 바인딩, 명령, 설정 편집, 기록 |
@@ -37,6 +38,8 @@ Core는 WPF와 독립되어 있고 App은 UI/Windows 통합을 담당합니다. 
 0.1.1: `BandizipEngine`은 목록의 상대 경로를 검사하고 `payload` 디렉터리를 사전 생성한 뒤 추출합니다. AppContainer에서는 반디집의 폴더 생성 helper가 실패할 수 있어 호스트가 검증한 경로만 만듭니다. 입력과 작업 루트는 읽기만 허용하며 실제 쓰기 ACL은 단계별 scratch/payload에만 부여합니다. 표준 입출력은 명시적 상속 핸들 목록으로 연결하고, 입력은 NUL, 출력/오류는 해당 작업 로그 파일에만 연결합니다. 임의의 다른 부모 프로세스 핸들은 상속하지 않습니다.
 
 ## 구현 순서
+
+0.1.4: `IArchiveEngine.TestAndExtractAsync`는 무결성 검사 직후의 원본 family 검사를 콜백으로 유지합니다. BandizipEngine은 빈 암호와 저장 암호를 순서대로 검사하고, 성공한 암호를 로컬 변수로만 유지해 목록 조회와 추출까지 전달합니다. 별도 성공 암호 캐시나 평문 암호 파일을 만들지 않습니다. CLI 비정상 종료만 다음 암호로 재시도하며 취소, watchdog, 격리 생성 오류는 즉시 중단합니다. 설정 적용 시 감시 중단 후 활성 암호문 목록을 교체하고 재시작으로 실패 캐시를 초기화합니다. 입력은 PasswordBox로 가리고 목록에는 이름만 표시합니다. CLI 출력은 기록 메시지로 복사하지 않으며 반디집 호출에는 암호를 프로세스 인수로 전달합니다.
 
 0.1.3: 전역 사용자 mutex는 그대로 중복 감시를 막고, 두 번째 수동 실행은 같은 사용자 전용 named pipe로 SHOW 요청을 보낸 뒤 종료합니다. 첫 프로세스는 Dispatcher에서 기존 창을 복원합니다. 첫 프로세스의 PID를 받은 두 번째 프로세스가 AllowSetForegroundWindow로 활성화 권한 전달을 시도합니다. 통신은 제한 시간/취소를 적용하고, 종료 시 리스너를 취소합니다. 백그라운드 자동 시작의 중복 실행은 활성화 요청 없이 종료합니다.
 

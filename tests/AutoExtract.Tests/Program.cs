@@ -75,6 +75,52 @@ async Task CreateBz(string[] arguments)
     await p.WaitForExitAsync(); await Task.WhenAll(stdout,stderr); if(p.ExitCode!=0) throw new Exception("fixture bz exit="+p.ExitCode+" "+await stderr);
 }
 await Test("실제 암호 ZIP 자동 실패 / 원본 보존", async d => { var source=Path.Combine(d,"source.txt"); File.WriteAllText(source,"secret"); var archive=Path.Combine(d,"encrypted.zip"); await CreateBz(["c","-y","-p:secret",archive,source]); var s=new ArchiveExtractionService(new BandizipEngine(()=>""),new FakeRecycle(),new SettingsService(Path.Combine(d,"config"))); using var cancel=new CancellationTokenSource(TimeSpan.FromSeconds(20)); await s.ProcessAsync(archive,true,cancel.Token); Assert(s.State.History[0].Status=="실패" && File.Exists(archive),s.State.History[0].Detail); });
+await Test("암호 DPAPI 저장 / 재시작 복원 / 손상 거부", d =>
+{
+    const string secret = "한글 암호 \"quoted\" & trailing\\";
+    var store = new SettingsService(d);
+    store.Save("settings.json", new AppSettings { Passwords = [new() { Name = "테스트", ProtectedValue = PasswordProtection.Protect(secret) }] });
+    var json = File.ReadAllText(Path.Combine(d, "settings.json"));
+    Assert(!json.Contains(secret) && !json.Contains("quoted"));
+    var restored = store.Load<AppSettings>("settings.json");
+    Assert(PasswordProtection.Unprotect(restored.Passwords[0].ProtectedValue) == secret);
+    var refused = false;
+    try { PasswordProtection.Unprotect(Convert.ToBase64String(new byte[24])); }
+    catch (System.Security.Cryptography.CryptographicException) { refused = true; }
+    Assert(refused);
+    return Task.CompletedTask;
+});
+await Test("실제 암호 ZIP / 틀린 암호 후 저장 암호 / 재시도", async d =>
+{
+    const string password = "한글 \"quoted\" & trailing\\";
+    var source = Path.Combine(d, "source.txt"); File.WriteAllText(source, "encrypted content");
+    var archive = Path.Combine(d, "saved.zip");
+    await CreateBz(["c", "-y", "-p:" + password, archive, source]);
+    string[] passwords = ["wrong"];
+    var recycle = new FakeRecycle();
+    var service = new ArchiveExtractionService(new BandizipEngine(() => "", () => passwords), recycle, new SettingsService(Path.Combine(d, "config")));
+    using var cancel = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+    await service.ProcessAsync(archive, true, cancel.Token);
+    Assert(service.State.History[0].Status == "실패" && File.Exists(archive) && recycle.Calls == 0);
+    passwords = ["wrong", password]; service.ResetFailures();
+    await service.ProcessAsync(archive, false, cancel.Token);
+    Assert(service.State.History[0].Status == "성공", service.State.History[0].Detail);
+    Assert(File.Exists(archive) && File.ReadAllText(Path.Combine(d, "saved", "source.txt")) == "encrypted content");
+    Assert(!File.ReadAllText(Path.Combine(d, "config", "state.json")).Contains("quoted"));
+    foreach (var log in Directory.GetFiles(d, "*.log", SearchOption.AllDirectories)) Assert(!File.ReadAllText(log).Contains(password), "암호가 로그에 노출됨");
+});
+await Test("실제 헤더 암호화 7z / 목록과 추출 암호 전달", async d =>
+{
+    var source = Path.Combine(d, "source.txt"); File.WriteAllText(source, "hidden name content");
+    var archive = Path.Combine(d, "hidden.7z");
+    // Bandizip encrypts 7z filenames automatically when a password is supplied.
+    await CreateBz(["c", "-y", "-fmt:7z", "-p:header-secret", archive, source]);
+    var service = new ArchiveExtractionService(new BandizipEngine(() => "", () => new[] { "wrong", "header-secret" }), new FakeRecycle(), new SettingsService(Path.Combine(d, "config")));
+    using var cancel = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+    await service.ProcessAsync(archive, false, cancel.Token);
+    Assert(service.State.History[0].Status == "성공", service.State.History[0].Detail);
+    Assert(File.ReadAllText(Path.Combine(d, "hidden", "source.txt")) == "hidden name content");
+});
 await Test("실제 분할 7z 추출 / 모든 볼륨 처리", async d => { var source=Path.Combine(d,"source.bin"); var data=new byte[128*1024]; System.Security.Cryptography.RandomNumberGenerator.Fill(data); File.WriteAllBytes(source,data); await CreateBz(["c","-y","-fmt:7z","-v:32KB",Path.Combine(d,"split.7z"),source]); var first=Path.Combine(d,"split.7z.001"); var r=new FakeRecycle(); var s=new ArchiveExtractionService(new BandizipEngine(()=>""),r,new SettingsService(Path.Combine(d,"config"))); await s.ProcessAsync(first,true,default); Assert(s.State.History[0].Status=="성공",s.State.History[0].Detail); Assert(r.Calls>=2 && Directory.GetFiles(d,"split.7z.*").Length==0); Assert(File.ReadAllBytes(Path.Combine(d,"split","source.bin")).SequenceEqual(data)); });
 await Test("실제 TAR 추출", async d => { var source=Path.Combine(d,"source.txt"); File.WriteAllText(source,"tar content"); var archive=Path.Combine(d,"normal.tar"); await CreateBz(["c","-y","-fmt:tar",archive,source]); var s=new ArchiveExtractionService(new BandizipEngine(()=>""),new FakeRecycle(),new SettingsService(Path.Combine(d,"config"))); await s.ProcessAsync(archive,false,default); Assert(s.State.History[0].Status=="성공",s.State.History[0].Detail); });
 await Test("작업 입력 복사본 변조 시 완료 거부", async d => { var(s,e,_,r)=Setup(d); var p=Zip(d); e.OnExtract=snapshot=>File.WriteAllText(snapshot,"changed snapshot"); await s.ProcessAsync(p,true,default); Assert(s.State.History[0].Status=="실패" && File.Exists(p) && !Directory.Exists(Path.Combine(d,"일반 압축")),s.State.History[0].Detail); });

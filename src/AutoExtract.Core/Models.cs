@@ -10,6 +10,7 @@ public sealed class WatchFolder
 }
 public sealed class AppSettings
 {
+    public List<SavedArchivePassword> Passwords { get; set; } = [];
     public List<WatchFolder> Folders { get; set; } = [];
     public string BandizipPath { get; set; } = "";
     public bool RecycleOriginal { get; set; } = true;
@@ -47,5 +48,11 @@ public interface IArchiveEngine
 {
     Task TestAsync(string archive, string workspace, CancellationToken token);
     Task ExtractAsync(string archive, string destination, string workspace, CancellationToken token);
+    async Task TestAndExtractAsync(string archive, string destination, string workspace, Action afterTest, CancellationToken token)
+    {
+        await TestAsync(archive, workspace, token).ConfigureAwait(false);
+        afterTest();
+        await ExtractAsync(archive, destination, workspace, token).ConfigureAwait(false);
+    }
 }
 public interface IFileRecycleService { void Recycle(string path); }

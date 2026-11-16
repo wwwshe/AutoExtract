@@ -8,7 +8,7 @@
   </StackPanel>
   <StackPanel DockPanel.Dock="Bottom" Margin="0,12,0,0"><TextBlock Text="{Binding Notice}" TextWrapping="Wrap" Foreground="#5E5064" Margin="0,0,0,10"/><Button Content="설정 저장" Command="{Binding Save}" HorizontalAlignment="Right" Background="#DDE9FF" FontWeight="SemiBold"/></StackPanel>
   <TabControl x:Name="Tabs">
-   <TabItem Header="감시 및 설정"><ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel Margin="14">
+   <TabItem Header="감시 및 설정"><ScrollViewer x:Name="SettingsScroll" VerticalScrollBarVisibility="Auto"><StackPanel Margin="14">
     <GroupBox Header="감시 폴더"><StackPanel>
      <StackPanel Orientation="Horizontal" Margin="0,0,0,10"><Button Content="폴더 추가" Command="{Binding AddFolder}"/><Button Content="폴더 제거" Command="{Binding RemoveFolder}"/></StackPanel>
      <DataGrid ItemsSource="{Binding Folders}" SelectedItem="{Binding SelectedFolder}" AutoGenerateColumns="False" CanUserAddRows="False" Height="175" HeadersVisibility="Column"><DataGrid.Columns>
@@ -24,6 +24,14 @@
      <CheckBox Content="Windows 로그인 시 자동 실행" IsChecked="{Binding Settings.AutoStart}" Margin="0,0,0,16"/>
      <TextBlock Text="반디집 실행 파일 (비워 두면 자동 탐색)" Margin="0,0,0,6"/>
      <DockPanel><Button DockPanel.Dock="Right" Content="찾아보기" Command="{Binding BrowseEngine}" Margin="8,0,0,0"/><TextBox Text="{Binding Settings.BandizipPath, UpdateSourceTrigger=PropertyChanged}"/></DockPanel>
+    </StackPanel></GroupBox>
+    <GroupBox Header="저장 암호"><StackPanel>
+     <TextBlock Text="빈 암호 검사에 실패하면 아래 순서대로 시도합니다. 모두 실패하면 원본을 보존합니다." TextWrapping="Wrap" Margin="0,0,0,8"/>
+     <TextBlock Text="암호는 현재 Windows 계정으로 암호화해 저장합니다. 이름에는 암호를 적지 마세요." Foreground="#596579" TextWrapping="Wrap" Margin="0,0,0,8"/>
+     <DockPanel Margin="0,0,0,8"><TextBlock Text="이름 (선택)" VerticalAlignment="Center" Width="90"/><TextBox Text="{Binding PasswordName, UpdateSourceTrigger=PropertyChanged}" MaxLength="80"/></DockPanel>
+     <DockPanel Margin="0,0,0,8"><Button DockPanel.Dock="Right" Content="암호 추가" Click="AddPassword_Click"/><TextBlock Text="암호" VerticalAlignment="Center" Width="90"/><PasswordBox x:Name="NewPassword" MaxLength="1024" Padding="6" VerticalContentAlignment="Center"/></DockPanel>
+     <ListBox ItemsSource="{Binding Passwords}" SelectedItem="{Binding SelectedPassword}" DisplayMemberPath="Name" Height="95" AutomationProperties.Name="저장된 암호 목록"/>
+     <Button Content="선택한 암호 삭제" Command="{Binding RemovePassword}" HorizontalAlignment="Left" Margin="0,8,0,0"/>
     </StackPanel></GroupBox>
    </StackPanel></ScrollViewer></TabItem>
    <TabItem Header="작업 기록"><DockPanel Margin="14"><DockPanel DockPanel.Dock="Bottom" Margin="0,12,0,0"><Button DockPanel.Dock="Left" Content="기록 전체 삭제" Command="{Binding ClearHistory}" ToolTip="저장된 작업 기록만 삭제합니다. 결과 폴더와 중복 처리 방지 정보는 유지됩니다."/><Button Content="선택한 결과 폴더 열기" Command="{Binding OpenOutput}" HorizontalAlignment="Right" Margin="0"/></DockPanel><DataGrid ItemsSource="{Binding History}" SelectedItem="{Binding SelectedJob}" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" HeadersVisibility="Column"><DataGrid.Columns>

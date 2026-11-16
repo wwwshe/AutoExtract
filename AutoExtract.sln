@@ -1,0 +1,50 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{CC57114D-552D-475E-883E-1DA5FD5FBB7B}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AutoExtract.Core", "src\AutoExtract.Core\AutoExtract.Core.csproj", "{40FD7236-083B-466C-86DD-40A527C5CAEE}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AutoExtract.App", "src\AutoExtract.App\AutoExtract.App.csproj", "{D420BC96-5139-4B8C-BAD0-606B83ECC1AE}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{A03F97FD-A494-4D2A-A718-2942C0AB5972}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AutoExtract.Tests", "tests\AutoExtract.Tests\AutoExtract.Tests.csproj", "{B3E5A880-BC83-4E7A-A39A-9D29B70E86EF}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AutoExtract.UiSmoke", "tests\AutoExtract.UiSmoke\AutoExtract.UiSmoke.csproj", "{0CC28747-34C7-4258-81A9-83C0B5AC6D81}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{40FD7236-083B-466C-86DD-40A527C5CAEE}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{40FD7236-083B-466C-86DD-40A527C5CAEE}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{40FD7236-083B-466C-86DD-40A527C5CAEE}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{40FD7236-083B-466C-86DD-40A527C5CAEE}.Release|Any CPU.Build.0 = Release|Any CPU
+		{D420BC96-5139-4B8C-BAD0-606B83ECC1AE}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D420BC96-5139-4B8C-BAD0-606B83ECC1AE}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D420BC96-5139-4B8C-BAD0-606B83ECC1AE}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D420BC96-5139-4B8C-BAD0-606B83ECC1AE}.Release|Any CPU.Build.0 = Release|Any CPU
+		{B3E5A880-BC83-4E7A-A39A-9D29B70E86EF}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{B3E5A880-BC83-4E7A-A39A-9D29B70E86EF}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{B3E5A880-BC83-4E7A-A39A-9D29B70E86EF}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{B3E5A880-BC83-4E7A-A39A-9D29B70E86EF}.Release|Any CPU.Build.0 = Release|Any CPU
+		{0CC28747-34C7-4258-81A9-83C0B5AC6D81}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{0CC28747-34C7-4258-81A9-83C0B5AC6D81}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{0CC28747-34C7-4258-81A9-83C0B5AC6D81}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{0CC28747-34C7-4258-81A9-83C0B5AC6D81}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{40FD7236-083B-466C-86DD-40A527C5CAEE} = {CC57114D-552D-475E-883E-1DA5FD5FBB7B}
+		{D420BC96-5139-4B8C-BAD0-606B83ECC1AE} = {CC57114D-552D-475E-883E-1DA5FD5FBB7B}
+		{B3E5A880-BC83-4E7A-A39A-9D29B70E86EF} = {A03F97FD-A494-4D2A-A718-2942C0AB5972}
+		{0CC28747-34C7-4258-81A9-83C0B5AC6D81} = {A03F97FD-A494-4D2A-A718-2942C0AB5972}
+	EndGlobalSection
+EndGlobal

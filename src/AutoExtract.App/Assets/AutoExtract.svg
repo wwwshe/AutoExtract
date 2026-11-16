@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+ <title>AutoExtract — 압축 상자와 아래쪽 화살표</title>
+ <rect x="8" y="8" width="240" height="240" rx="52" fill="#193D60"/>
+ <rect x="18" y="18" width="220" height="220" rx="43" fill="#204D76"/>
+ <rect x="55" y="122" width="146" height="89" rx="13" fill="#F2AB45"/>
+ <rect x="55" y="143" width="72" height="68" rx="10" fill="#FFC66C"/>
+ <rect x="48" y="111" width="160" height="31" rx="8" fill="#FFD68C"/>
+ <path d="M111 44H145V96H174L128 145L82 96H111Z" fill="#F5FCFF"/>
+ <g fill="#7E552A"><rect x="121" y="157" width="14" height="8" rx="2"/><rect x="121" y="175" width="14" height="8" rx="2"/><rect x="121" y="193" width="14" height="8" rx="2"/></g>
+</svg>

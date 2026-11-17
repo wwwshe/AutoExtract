@@ -133,6 +133,25 @@ await Test("실제 ZIP의 명시적 디렉터리 없는 다단계 경로 추출"
     Assert(s.State.History[0].Status=="성공",s.State.History[0].Detail);
     Assert(File.ReadAllText(Path.Combine(d,"nested","상위 폴더","하위 폴더","파일.txt"))=="nested content");
 });
+foreach (var format in new[] { "zip", "7z", "tar" })
+await Test($"실제 {format} 빈 폴더 및 0바이트 파일 추출", async d =>
+{
+    var source = Path.Combine(d, "source");
+    foreach (var name in new[] { "crashReport/attachments", "crashReport/reports", "node_modules/@electron", "빈 폴더/하위 폴더" })
+        Directory.CreateDirectory(Path.Combine(source, name));
+    File.WriteAllText(Path.Combine(source, "empty.txt"), "");
+    File.WriteAllText(Path.Combine(source, "normal.txt"), "content");
+    var archive = Path.Combine(d, "empty-directories." + format);
+    await CreateBz(["c", "-y", "-fmt:" + format, archive, source]);
+    var service = new ArchiveExtractionService(new BandizipEngine(() => ""), new FakeRecycle(), new SettingsService(Path.Combine(d, "config")));
+    await service.ProcessAsync(archive, false, default);
+    Assert(service.State.History[0].Status == "성공", service.State.History[0].Detail);
+    var output = Path.Combine(d, "empty-directories", "source");
+    foreach (var name in new[] { "crashReport/attachments", "crashReport/reports", "node_modules/@electron", "빈 폴더/하위 폴더" })
+        Assert(Directory.Exists(Path.Combine(output, name)), name);
+    Assert(File.Exists(Path.Combine(output, "empty.txt")) && new FileInfo(Path.Combine(output, "empty.txt")).Length == 0);
+    Assert(File.ReadAllText(Path.Combine(output, "normal.txt")) == "content" && File.Exists(archive));
+});
 await Test("실제 TAR 경로 순회가 추출 대상 밖에 파일을 생성하지 않음", async d =>
 {
     var archive=Path.Combine(d,"traversal.tar");
@@ -166,16 +185,42 @@ await Test("정상 휴지통 처리 후 작업 폴더 정리", async d =>
 });
 await Test("다른 실패 작업은 성공 작업 정리 중에도 보존", async d =>
 {
-    var(s,e,_,_)=Setup(d); var a=Zip(d,"bad.zip"); e.FailExtract=true; await s.ProcessAsync(a,false,default);
+    var(s,e,_,_)=Setup(d); var a=Zip(d,"bad.zip");
+    e.OnTest=()=>
+    {
+        var work=Directory.GetDirectories(Path.Combine(d,".AutoExtract-Working")).Single();
+        File.WriteAllText(Path.Combine(work,"bz-x.log"),"failure details");
+        File.WriteAllText(Path.Combine(work,"payload","partial.bin"),"partial content");
+    };
+    e.FailExtract=true; await s.ProcessAsync(a,false,default);
     var workRoot=Path.Combine(d,".AutoExtract-Working"); var failedWork=Directory.GetDirectories(workRoot).Single();
-    e.FailExtract=false; var b=Zip(d,"good.zip"); await s.ProcessAsync(b,false,default);
+    e.FailExtract=false; e.OnTest=null; var b=Zip(d,"good.zip"); await s.ProcessAsync(b,false,default);
     Assert(s.State.History[0].Status=="성공" && Directory.GetDirectories(workRoot).Single()==failedWork);
-    Assert(File.Exists(Path.Combine(failedWork,"input","bad.zip")) && File.Exists(a));
+    Assert(!Directory.Exists(Path.Combine(failedWork,"input")) && !Directory.Exists(Path.Combine(failedWork,"payload")) && File.Exists(a));
+    Assert(Directory.GetFileSystemEntries(failedWork).Length==1 && File.ReadAllText(Path.Combine(failedWork,"bz-x.log"))=="failure details");
 });
-await Test("휴지통 실패 시 작업 폴더와 원본 보존", async d =>
+await Test("휴지통 실패 시 원본 복원 후 임시 복사본 정리", async d =>
 {
     var(s,_,r,_)=Setup(d); r.Fail=true; var p=Zip(d); await s.ProcessAsync(p,true,default);
-    Assert(s.State.History[0].Status=="성공 · 경고" && File.Exists(p) && Directory.Exists(Path.Combine(d,".AutoExtract-Working")));
+    Assert(s.State.History[0].Status=="성공 · 경고" && File.Exists(p) && !Directory.Exists(Path.Combine(d,".AutoExtract-Working")));
+});
+await Test("재시작 시 이전 실패 작업의 로그와 복구 원본만 보존", d =>
+{
+    var(s,_,_,_)=Setup(d);
+    var work=Path.Combine(d,".AutoExtract-Working",Guid.NewGuid().ToString("N"));
+    foreach(var name in new[]{"input","payload","scratch","originals"})
+    {
+        Directory.CreateDirectory(Path.Combine(work,name));
+        File.WriteAllText(Path.Combine(work,name,"data.bin"),name);
+    }
+    File.WriteAllText(Path.Combine(work,"bz-x.log"),"details");
+    File.WriteAllText(Path.Combine(d,"data.bin"),"existing replacement");
+    s.RecoverOriginals(d);
+    Assert(File.ReadAllText(Path.Combine(work,"bz-x.log"))=="details");
+    Assert(File.ReadAllText(Path.Combine(work,"originals","data.bin"))=="originals");
+    Assert(File.ReadAllText(Path.Combine(d,"data.bin"))=="existing replacement");
+    foreach(var name in new[]{"input","payload","scratch"}) Assert(!Directory.Exists(Path.Combine(work,name)));
+    return Task.CompletedTask;
 });
 await Test("작업 폴더에 복구할 원본이 남으면 정리 거부", async d =>
 {
@@ -183,7 +228,7 @@ await Test("작업 폴더에 복구할 원본이 남으면 정리 거부", async
     e.OnExtract=snapshot=> { var originals=Path.Combine(Path.GetDirectoryName(Path.GetDirectoryName(snapshot))!,"originals"); Directory.CreateDirectory(originals); File.WriteAllText(Path.Combine(originals,"recover.zip"),"retain me"); };
     await s.ProcessAsync(p,false,default); var workspace=Directory.GetDirectories(Path.Combine(d,".AutoExtract-Working")).Single();
     Assert(s.State.History[0].Status=="성공 · 경고" && File.ReadAllText(Path.Combine(workspace,"originals","recover.zip"))=="retain me");
-    Assert(File.Exists(Path.Combine(workspace,"input",Path.GetFileName(p))));
+    Assert(!Directory.Exists(Path.Combine(workspace,"input")));
 });
 await Test("예상하지 않은 작업 파일은 정리하지 않음", async d =>
 {

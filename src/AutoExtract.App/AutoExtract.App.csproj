@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
  <PropertyGroup><OutputType>WinExe</OutputType><TargetFramework>net8.0-windows</TargetFramework><UseWPF>true</UseWPF><UseWindowsForms>true</UseWindowsForms><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable><ApplicationManifest>app.manifest</ApplicationManifest><PublishSingleFile>false</PublishSingleFile><SelfContained>false</SelfContained><RuntimeIdentifier>win-x64</RuntimeIdentifier><IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract></PropertyGroup>
- <PropertyGroup><AssemblyName>AutoExtract</AssemblyName><Version>0.1.4</Version></PropertyGroup>
+ <PropertyGroup><AssemblyName>AutoExtract</AssemblyName><Version>0.1.5</Version></PropertyGroup>
  <PropertyGroup><ApplicationIcon>Assets\AutoExtract.ico</ApplicationIcon></PropertyGroup>
  <ItemGroup><Resource Include="Assets\AutoExtract.ico" /><EmbeddedResource Include="Assets\AutoExtract.png" LogicalName="AutoExtract.WindowIcon.png" /><EmbeddedResource Include="Assets\AutoExtract.ico" LogicalName="AutoExtract.TrayIcon.ico" /></ItemGroup>
  <ItemGroup><ProjectReference Include="../AutoExtract.Core/AutoExtract.Core.csproj" /></ItemGroup>

@@ -39,7 +39,7 @@ public sealed class BandizipEngine(Func<string> configuredPath, Func<IReadOnlyLi
     }
     private async Task ExtractWithPasswordAsync(string archive, string destination, string workspace, string password, CancellationToken token)
     {
-        await InvokeAsync(["l", "-list:s", "-consolemode:utf8", "-p:" + password, "-", archive], workspace, token).ConfigureAwait(false);
+        await InvokeAsync(["l", "-consolemode:utf8", "-p:" + password, "-", archive], workspace, token).ConfigureAwait(false);
         await PrepareDirectoriesAsync(Path.Combine(workspace, "bz-l.log"), destination, token).ConfigureAwait(false);
         await InvokeAsync(["x", "-y", "-aou", "-consolemode:utf8", "-p:" + password, "-o:" + destination, "-", archive], workspace, token, destination).ConfigureAwait(false);
     }
@@ -51,10 +51,26 @@ public sealed class BandizipEngine(Func<string> configuredPath, Func<IReadOnlyLi
         var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(destination));
         ArchiveDetectionService.RejectReparseAncestors(root);
         using var reader = new StreamReader(listing, System.Text.Encoding.UTF8);
-        while (await reader.ReadLineAsync(token).ConfigureAwait(false) is { } entry)
+        var inTable = false;
+        var complete = false;
+        var nameOffset = 0;
+        while (await reader.ReadLineAsync(token).ConfigureAwait(false) is { } line)
         {
             token.ThrowIfCancellationRequested();
-            if (entry.Length == 0) continue;
+            // The short listing omits trailing separators on RAR directories.
+            // Read the directory attribute from the standard listing instead.
+            if (System.Text.RegularExpressions.Regex.IsMatch(line, @"^-{19} -{4} -{12} -{12} -+$"))
+            {
+                if (inTable) { complete = true; break; }
+                nameOffset = line.LastIndexOf(' ') + 1;
+                inTable = true;
+                continue;
+            }
+            if (!inTable) continue;
+            if (line.Length <= nameOffset || !System.Text.RegularExpressions.Regex.IsMatch(line, @"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} [A-Z_]{4} +\d+ +\d+ "))
+                throw new InvalidDataException("압축 항목 목록 형식을 인식할 수 없습니다. 원본 보존.");
+            var entry = line[nameOffset..];
+            var isDirectory = line[20] == 'D';
             if (entry.Length > 32700 || Path.IsPathRooted(entry) || entry.Contains(':') || entry.Any(char.IsControl)) throw new InvalidDataException("안전하지 않은 압축 항목 경로. 원본 보존.");
             var parts = entry.Replace('/', '\\').Split('\\', StringSplitOptions.RemoveEmptyEntries);
             foreach (var part in parts)
@@ -71,10 +87,11 @@ public sealed class BandizipEngine(Func<string> configuredPath, Func<IReadOnlyLi
             var target = Path.GetFullPath(Path.Combine(root, entry));
             if (target.Equals(root, StringComparison.OrdinalIgnoreCase)) continue;
             if (!target.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException("추출 폴더 밖의 압축 항목 거부.");
-            var folder = entry.EndsWith('/') || entry.EndsWith('\\') ? target : Path.GetDirectoryName(target)!;
+            var folder = isDirectory ? target : Path.GetDirectoryName(target)!;
             Directory.CreateDirectory(folder);
             ArchiveDetectionService.RejectReparseAncestors(folder);
         }
+        if (!complete) throw new InvalidDataException("압축 항목 목록이 불완전합니다. 원본 보존.");
     }
     private async Task InvokeAsync(string[] args, string workspace, CancellationToken token, string? writableDirectory = null)
     {

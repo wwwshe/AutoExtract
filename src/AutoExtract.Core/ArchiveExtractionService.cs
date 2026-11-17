@@ -130,14 +130,20 @@ public sealed class ArchiveExtractionService
                 try { CleanupSuccessfulWorkspace(workspace, Path.GetDirectoryName(path)!); }
                 catch (Exception e) { warnings.Add("작업 폴더 정리 실패 (결과물 유지): " + e.Message + " | 작업 경로: " + workspace); }
             }
+            if (warnings.Count > 0)
+            {
+                var cleanupWarning = CleanupRetainingLogs(workspace, Path.GetDirectoryName(path)!);
+                if (cleanupWarning.Length > 0) warnings.Add(cleanupWarning);
+            }
             Record(new(path, signature, DateTimeOffset.Now, warnings.Count == 0 ? "성공" : "성공 · 경고", warnings.Count == 0 ? "압축 해제 완료" : string.Join(" / ", warnings), output));
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested)
-        { if (acquired) Record(new(path, signature, DateTimeOffset.Now, "취소", "프로그램 종료/일시정지. 원본 보존. 임시 경로: " + workspace, committed ? output : null)); }
+        { if (acquired) Record(new(path, signature, DateTimeOffset.Now, "취소", "프로그램 종료/일시정지. 원본 보존. 로그 경로: " + workspace + CleanupRetainingLogs(workspace, Path.GetDirectoryName(path)!), committed ? output : null)); }
         catch (Exception e)
         {
             if (signature.Length > 0 && !committed) failed[path] = signature;
-            Record(new(path, signature, DateTimeOffset.Now, committed ? "성공 · 경고" : "실패", e.Message + (workspace.Length > 0 ? " | 작업 경로: " + workspace : ""), output.Length > 0 ? output : null));
+            var cleanupWarning = CleanupRetainingLogs(workspace, Path.GetDirectoryName(path)!);
+            Record(new(path, signature, DateTimeOffset.Now, committed ? "성공 · 경고" : "실패", e.Message + (workspace.Length > 0 ? " | 로그 경로: " + workspace : "") + cleanupWarning, output.Length > 0 ? output : null));
         }
         finally
         {
@@ -149,7 +155,13 @@ public sealed class ArchiveExtractionService
     {
         if (!family.SequenceEqual(detection.Family(path), StringComparer.OrdinalIgnoreCase) || detection.HasTemporaryCompanion(family)) throw new IOException("분할 구성 또는 임시 다운로드 파일 변경. 원본 보존.");
     }
-    private static void CleanupSuccessfulWorkspace(string workspace, string archiveParent)
+    private static string CleanupRetainingLogs(string workspace, string archiveParent)
+    {
+        if (workspace.Length == 0 || !Directory.Exists(workspace)) return "";
+        try { CleanupSuccessfulWorkspace(workspace, archiveParent, retainLogs: true); return ""; }
+        catch (Exception e) { return " | 임시 데이터 정리 실패: " + e.Message; }
+    }
+    private static void CleanupSuccessfulWorkspace(string workspace, string archiveParent, bool retainLogs = false)
     {
         var full = Path.TrimEndingDirectorySeparator(Path.GetFullPath(workspace));
         var root = Path.Combine(Path.GetFullPath(archiveParent), ".AutoExtract-Working");
@@ -157,6 +169,7 @@ public sealed class ArchiveExtractionService
             || !Guid.TryParseExact(Path.GetFileName(full), "N", out _)) throw new IOException("예상하지 않은 작업 폴더 경로. 정리하지 않습니다.");
         ArchiveDetectionService.RejectReparseAncestors(full);
         var knownFolders = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "input", "scratch", "originals" };
+        if (retainLogs) knownFolders.Add("payload");
         var knownFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "bz-t.log", "bz-l.log", "bz-x.log" };
         var files = new List<string>();
         var directories = new List<string>();
@@ -174,13 +187,17 @@ public sealed class ArchiveExtractionService
                 {
                     if (topLevel && !knownFolders.Contains(name)) throw new IOException("예상하지 않은 작업 폴더 항목: " + name);
                     if (topLevel && name.Equals("originals", StringComparison.OrdinalIgnoreCase) && Directory.EnumerateFileSystemEntries(entry).Any())
+                    {
+                        if (retainLogs) continue;
                         throw new IOException("복구할 원본이 남아 있어 작업 폴더를 보존합니다.");
+                    }
                     Inspect(entry, false);
                     directories.Add(entry);
                 }
                 else
                 {
                     if (topLevel && !knownFiles.Contains(name)) throw new IOException("예상하지 않은 작업 파일: " + name);
+                    if (topLevel && retainLogs) continue;
                     files.Add(entry);
                 }
             }
@@ -189,7 +206,7 @@ public sealed class ArchiveExtractionService
         foreach (var file in files) { ArchiveDetectionService.RejectReparseAncestors(file); File.Delete(file); }
         // Nonrecursive deletes fail safely if another file appears during cleanup.
         foreach (var directory in directories) { ArchiveDetectionService.RejectReparseAncestors(directory); Directory.Delete(directory, false); }
-        Directory.Delete(full, false);
+        if (!Directory.EnumerateFileSystemEntries(full).Any()) Directory.Delete(full, false);
         TryRemoveEmptyWorkingRoot(root);
     }
     private static void TryRemoveEmptyWorkingRoot(string root)
@@ -229,7 +246,12 @@ public sealed class ArchiveExtractionService
             if (!Guid.TryParseExact(Path.GetFileName(work), "N", out _)) continue;
             ArchiveDetectionService.RejectReparseAncestors(work);
             var originals = Path.Combine(work, "originals");
-            if (!Directory.Exists(originals)) continue;
+            if (!Directory.Exists(originals))
+            {
+                var warning = CleanupRetainingLogs(work, parent);
+                if (warning.Length > 0) ReportError(work, new IOException(warning));
+                continue;
+            }
             ArchiveDetectionService.RejectReparseAncestors(originals);
             foreach (var source in Directory.EnumerateFiles(originals))
             {
@@ -242,6 +264,8 @@ public sealed class ArchiveExtractionService
                 }
                 catch (Exception e) { ReportError(source, new IOException("보존된 원본 수동 복구 필요: " + source + " | " + e.Message)); }
             }
+            var cleanupWarning = CleanupRetainingLogs(work, parent);
+            if (cleanupWarning.Length > 0) ReportError(work, new IOException(cleanupWarning));
         }
         TryRemoveEmptyWorkingRoot(root);
     }

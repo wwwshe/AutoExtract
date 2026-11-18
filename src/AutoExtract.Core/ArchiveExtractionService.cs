@@ -148,6 +148,12 @@ public sealed class ArchiveExtractionService
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested)
         { if (acquired) Record(new(path, signature, DateTimeOffset.Now, "취소", "프로그램 종료/일시정지. 원본 보존. 로그 경로: " + workspace + CleanupRetainingLogs(workspace, Path.GetDirectoryName(path)!), committed ? output : null)); }
+        catch (ArchiveIntegrityException e) when (!committed && detection.IsSplitArchive(path))
+        {
+            if (signature.Length > 0) failed[path] = signature;
+            var cleanupWarning = CleanupRetainingLogs(workspace, Path.GetDirectoryName(path)!);
+            Record(new(path, signature, DateTimeOffset.Now, "대기", "분할 파일 추가/변경 대기. 변경 시 자동 재시도합니다. 모두 받은 상태라면 암호 또는 파일 손상을 확인하세요. " + e.Message + " | 로그 경로: " + workspace + cleanupWarning, null));
+        }
         catch (Exception e)
         {
             if (signature.Length > 0 && !committed) failed[path] = signature;

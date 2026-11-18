@@ -48,6 +48,17 @@ await Test("일반 ZIP / 한글 / 특수문자 / 원본 유지", async d => { va
 await Test("손상 ZIP 원본 보존", async d => { var(s,e,_,_) = Setup(d); var p = Path.Combine(d,"bad.zip"); File.WriteAllText(p,"bad"); await s.ProcessAsync(p,true,default); Assert(s.State.History[0].Status=="실패" && File.Exists(p) && e.Extracts==0); });
 await Test("다운로드 writer 잠금 / 변경 후 처리", async d => { var(s,e,_,_) = Setup(d); var p=Zip(d); using(var writer=new FileStream(p,FileMode.Open,FileAccess.Write,FileShare.Read)) { await s.ProcessAsync(p,false,default); Assert(e.Tests==0); } await s.ProcessAsync(p,false,default); Assert(e.Tests==1); });
 await Test("검사 실패 동일 내용 억제 / 내용 변경 재시도", async d => { var(s,e,_,_) = Setup(d); var p=Zip(d); e.FailTest=true; await s.ProcessAsync(p,false,default); await s.ProcessAsync(p,false,default); Assert(e.Tests==1); File.Delete(p); Zip(d,text:"changed"); e.FailTest=false; await s.ProcessAsync(p,false,default); Assert(e.Tests==2 && e.Extracts==1); });
+await Test("분할 검사 대기 / 변경 재시도 / 추출 오류는 실패", async d =>
+{
+    var(s,e,_,_)=Setup(d); var p=Zip(d,"split.7z.001");
+    e.OnTest=()=>throw new ArchiveIntegrityException("simulated incomplete volumes");
+    await s.ProcessAsync(p,true,default); Assert(s.State.History[0].Status=="대기" && File.Exists(p));
+    var count=s.State.History.Count; await s.ProcessAsync(p,true,default); Assert(e.Tests==1 && s.State.History.Count==count);
+    File.WriteAllText(Path.Combine(d,"split.7z.002"),"next volume"); e.OnTest=null; e.FailExtract=true;
+    await s.ProcessAsync(p,true,default); Assert(e.Tests==2 && s.State.History[0].Status=="실패" && File.Exists(p));
+    File.AppendAllText(Path.Combine(d,"split.7z.002"),"complete"); e.FailExtract=false;
+    await s.ProcessAsync(p,false,default); Assert(s.State.History[0].Status=="성공");
+});
 await Test("동일 파일 동시 요청 중복 방지", async d => { var(s,e,_,_) = Setup(d); e.Delay=150; var p=Zip(d); await Task.WhenAll(Enumerable.Range(0,12).Select(_=>s.ProcessAsync(p,false,default))); Assert(e.Tests==1 && e.Extracts==1); });
 await Test("기존 폴더와 파일명 충돌", async d => { var(s,_,_,_) = Setup(d); var p=Zip(d); Directory.CreateDirectory(Path.Combine(d,"일반 압축")); File.WriteAllText(Path.Combine(d,"일반 압축 (2)"),"existing"); await s.ProcessAsync(p,false,default); Assert(Directory.Exists(Path.Combine(d,"일반 압축 (3)"))); });
 await Test("추출 실패 원본 유지", async d => { var(s,e,_,_) = Setup(d); var p=Zip(d); e.FailExtract=true; await s.ProcessAsync(p,true,default); Assert(File.Exists(p) && s.State.History[0].Status=="실패"); });
@@ -147,6 +158,22 @@ await Test("실제 헤더 암호화 7z / 목록과 추출 암호 전달", async 
     Assert(File.ReadAllText(Path.Combine(d, "hidden", "source.txt")) == "hidden name content");
 });
 await Test("실제 분할 7z 추출 / 모든 볼륨 처리", async d => { var source=Path.Combine(d,"source.bin"); var data=new byte[128*1024]; System.Security.Cryptography.RandomNumberGenerator.Fill(data); File.WriteAllBytes(source,data); await CreateBz(["c","-y","-fmt:7z","-v:32KB",Path.Combine(d,"split.7z"),source]); var first=Path.Combine(d,"split.7z.001"); var r=new FakeRecycle(); var s=new ArchiveExtractionService(new BandizipEngine(()=>""),r,new SettingsService(Path.Combine(d,"config"))); await s.ProcessAsync(first,true,default); Assert(s.State.History[0].Status=="성공",s.State.History[0].Detail); Assert(r.Calls>=2 && Directory.GetFiles(d,"split.7z.*").Length==0); Assert(File.ReadAllBytes(Path.Combine(d,"split","source.bin")).SequenceEqual(data)); });
+await Test("실제 분할 순차 다운로드 대기 / 중복 억제 / 완료 후 자동 재시도", async d =>
+{
+    var source=Path.Combine(d,"source.bin"); var data=new byte[96*1024]; System.Security.Cryptography.RandomNumberGenerator.Fill(data); File.WriteAllBytes(source,data);
+    await CreateBz(["c","-y","-fmt:7z","-v:32KB",Path.Combine(d,"split.7z"),source]);
+    var parts=Directory.GetFiles(d,"split.7z.*").Order().ToArray();
+    var held=Path.Combine(d,"held"); Directory.CreateDirectory(held);
+    foreach(var part in parts.Skip(1)) File.Move(part,Path.Combine(held,Path.GetFileName(part)));
+    var r=new FakeRecycle(); var s=new ArchiveExtractionService(new BandizipEngine(()=>""),r,new SettingsService(Path.Combine(d,"config")));
+    await s.ProcessAsync(parts[0],true,default);
+    Assert(s.State.History[0].Status=="대기" && File.Exists(parts[0]) && r.Calls==0,s.State.History[0].Detail);
+    var count=s.State.History.Count; await s.ProcessAsync(parts[0],true,default); Assert(s.State.History.Count==count);
+    foreach(var part in parts.Skip(1)) File.Move(Path.Combine(held,Path.GetFileName(part)),part);
+    await s.ProcessAsync(parts[0],true,default);
+    Assert(s.State.History[0].Status=="성공" && r.Calls==parts.Length,s.State.History[0].Detail);
+    Assert(File.ReadAllBytes(Path.Combine(d,"split","source.bin")).SequenceEqual(data));
+});
 await Test("실제 TAR 추출", async d => { var source=Path.Combine(d,"source.txt"); File.WriteAllText(source,"tar content"); var archive=Path.Combine(d,"normal.tar"); await CreateBz(["c","-y","-fmt:tar",archive,source]); var s=new ArchiveExtractionService(new BandizipEngine(()=>""),new FakeRecycle(),new SettingsService(Path.Combine(d,"config"))); await s.ProcessAsync(archive,false,default); Assert(s.State.History[0].Status=="성공",s.State.History[0].Detail); });
 await Test("작업 입력 복사본 변조 시 완료 거부", async d => { var(s,e,_,r)=Setup(d); var p=Zip(d); e.OnExtract=snapshot=>File.WriteAllText(snapshot,"changed snapshot"); await s.ProcessAsync(p,true,default); Assert(s.State.History[0].Status=="실패" && File.Exists(p) && !Directory.Exists(Path.Combine(d,"일반 압축")),s.State.History[0].Detail); });
 await Test("실제 ZIP의 명시적 디렉터리 없는 다단계 경로 추출", async d =>

@@ -21,6 +21,7 @@ public sealed class ArchiveDetectionService
         if (stem == name) stem = Path.GetFileNameWithoutExtension(name);
         return string.IsNullOrWhiteSpace(stem) ? "Archive" : stem;
     }
+    public bool IsSplitArchive(string path) => Match(Path.GetFileName(path), @"\.(part0*1\.rar|vol0*1\.egg|7z\.0*1|zip\.0*1)$") || Family(path).Length > 1;
     public string[] Family(string path)
     {
         var stem = Regex.Escape(BaseName(path));

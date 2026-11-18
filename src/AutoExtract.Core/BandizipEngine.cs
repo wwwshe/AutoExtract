@@ -35,7 +35,7 @@ public sealed class BandizipEngine(Func<string> configuredPath, Func<IReadOnlyLi
             }
             catch (BandizipExitException error) { last = error; }
         }
-        throw new InvalidDataException("빈 암호와 저장된 암호로 무결성 검사를 통과하지 못했습니다. 암호 불일치·파일 손상·분할 누락 등을 확인하세요. " + last!.Message);
+        throw new ArchiveIntegrityException("빈 암호와 저장된 암호로 무결성 검사를 통과하지 못했습니다. 암호 불일치·파일 손상·분할 누락 등을 확인하세요. " + last!.Message);
     }
     private async Task ExtractWithPasswordAsync(string archive, string destination, string workspace, string password, CancellationToken token)
     {

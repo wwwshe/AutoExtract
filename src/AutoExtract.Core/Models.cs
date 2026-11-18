@@ -22,6 +22,7 @@ public sealed class AppState
 {
     public List<JobRecord> History { get; set; } = [];
     public Dictionary<string, string> Completed { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+    public Dictionary<string, string> CompletedOutputs { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     public List<string> OutputFolders { get; set; } = [];
 }
 public sealed class SettingsService

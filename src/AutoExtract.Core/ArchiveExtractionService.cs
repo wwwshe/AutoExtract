@@ -35,6 +35,12 @@ public sealed class ArchiveExtractionService
         this.engine = engine; this.recycle = recycle; this.storage = storage;
         State = storage.Load<AppState>("state.json");
         State.Completed = new(State.Completed, StringComparer.OrdinalIgnoreCase);
+        State.CompletedOutputs = new(State.CompletedOutputs, StringComparer.OrdinalIgnoreCase);
+        // Older state files kept output paths only in history.
+        foreach (var entry in State.History)
+            if (entry.Output is not null && entry.Status.StartsWith("성공")
+                && State.Completed.TryGetValue(entry.File, out var signature) && signature == entry.Signature)
+                State.CompletedOutputs.TryAdd(entry.File, entry.Output);
     }
     public bool IsExcluded(string path) => path.Split(Path.DirectorySeparatorChar).Any(p => p.Equals(".AutoExtract-Working", StringComparison.OrdinalIgnoreCase)) || State.OutputFolders.Any(p => IsWithin(path, p));
     private static bool IsWithin(string path, string parent) => path.Equals(parent, StringComparison.OrdinalIgnoreCase) || path.StartsWith(parent.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
@@ -56,7 +62,9 @@ public sealed class ArchiveExtractionService
             try { foreach (var member in family) { ArchiveDetectionService.RejectReparseAncestors(member); leases.Add(new SourceLease(member)); } }
             catch (System.ComponentModel.Win32Exception e) when (e.NativeErrorCode is 32 or 33) { return; } // Open writer/reader: next sweep retries.
             signature = await ArchiveDetectionService.SignatureAsync(leases, token).ConfigureAwait(false);
-            if (State.Completed.TryGetValue(path, out var done) && done == signature || failed.TryGetValue(path, out var bad) && bad == signature) return;
+            if (State.Completed.TryGetValue(path, out var done) && done == signature
+                && State.CompletedOutputs.TryGetValue(path, out var previousOutput) && Directory.Exists(previousOutput)) return;
+            if (failed.TryGetValue(path, out var bad) && bad == signature) return;
             var workRoot = Path.Combine(Path.GetDirectoryName(path)!, ".AutoExtract-Working");
             Directory.CreateDirectory(workRoot);
             HideWorkingRoot(workRoot);
@@ -99,6 +107,7 @@ public sealed class ArchiveExtractionService
             {
                 State.OutputFolders.Add(output);
                 State.Completed[path] = signature;
+                State.CompletedOutputs[path] = output;
                 storage.Save("state.json", State);
             }
             committed = true;

@@ -55,6 +55,31 @@ await Test("휴지통 실패 결과 보존 / 원본 경로 복구", async d => {
 await Test("여러 감시 폴더 / 하위 폴더", async d => { var(s,e,_,_) = Setup(d); var a=Path.Combine(d,"a"); var b=Path.Combine(d,"b","sub"); Directory.CreateDirectory(a); Directory.CreateDirectory(b); Zip(a); Zip(b); await using var w=new FolderWatcherService(s); await w.StartAsync(new AppSettings{RecycleOriginal=false,Folders=[new(){Path=a},new(){Path=Path.Combine(d,"b"),IncludeSubdirectories=true}]}); for(int i=0;i<100 && e.Extracts<2;i++) await Task.Delay(50); await w.StopAsync(); Assert(e.Extracts==2); });
 await Test("설정 재시작 복원", d => { var store=new SettingsService(d); store.Save("settings.json",new AppSettings{RecycleOriginal=false,AutoStart=true,Paused=true,Folders=[new(){Path=d,Enabled=false,IncludeSubdirectories=true}],BandizipPath="test"}); var s=new SettingsService(d).Load<AppSettings>("settings.json"); Assert(s.Paused && s.AutoStart && !s.RecycleOriginal && s.Folders[0].IncludeSubdirectories && !s.Folders[0].Enabled && s.BandizipPath=="test"); return Task.CompletedTask; });
 await Test("성공 기록 재시작 중복 억제", async d => { var(s,e,r,store)=Setup(d); var p=Zip(d); await s.ProcessAsync(p,false,default); var restarted=new ArchiveExtractionService(e,r,store); await restarted.ProcessAsync(p,false,default); Assert(e.Extracts==1); });
+await Test("결과 폴더 삭제 / 동일 압축 재다운로드 / 기록 삭제 후 재시작", async d =>
+{
+    var(s,e,r,store)=Setup(d); var p=Zip(d);
+    await s.ProcessAsync(p,false,default);
+    var output=s.State.History[0].Output!;
+    var bytes=File.ReadAllBytes(p);
+    Directory.Delete(output,true); File.Delete(p); File.WriteAllBytes(p,bytes);
+    await s.ClearHistoryAsync();
+    var restarted=new ArchiveExtractionService(e,r,store);
+    await restarted.ProcessAsync(p,false,default);
+    Assert(e.Extracts==2 && File.Exists(Path.Combine(output,"문서 & 파일.txt")));
+    await restarted.ProcessAsync(p,false,default); Assert(e.Extracts==2);
+});
+await Test("이전 버전 성공 기록의 출력 경로 복원", async d =>
+{
+    var(s,e,r,store)=Setup(d); var p=Zip(d);
+    Directory.CreateDirectory(Path.Combine(d,"일반 압축"));
+    await s.ProcessAsync(p,false,default);
+    var output=s.State.History[0].Output!;
+    s.State.CompletedOutputs.Clear(); store.Save("state.json",s.State);
+    var restarted=new ArchiveExtractionService(e,r,store);
+    await restarted.ProcessAsync(p,false,default); Assert(e.Extracts==1);
+    Directory.Delete(output,true);
+    await restarted.ProcessAsync(p,false,default); Assert(e.Extracts==2);
+});
 await Test("임시 다운로드 파일 대기", async d => { var(s,e,_,_) = Setup(d); var p=Zip(d); File.WriteAllText(p+".crdownload",""); await s.ProcessAsync(p,false,default); Assert(e.Tests==0); File.Delete(p+".crdownload"); await s.ProcessAsync(p,false,default); Assert(e.Tests==1); });
 await Test("분할 최초 볼륨 / 정확한 family", d => { var detector=new ArchiveDetectionService(); Assert(detector.IsArchive("foo.part01.rar") && !detector.IsArchive("foo.part02.rar") && detector.IsArchive("foo.7z.001") && !detector.IsArchive("foo.z01")); foreach(var n in new[]{"foo.part01.rar","foo.part02.rar","foo2.part02.rar"}) File.WriteAllText(Path.Combine(d,n),""); Assert(detector.Family(Path.Combine(d,"foo.part01.rar")).Length==2); return Task.CompletedTask; });
 await Test("ZIP 경로 순회 차단", async d => { var(s,e,_,_) = Setup(d); var p=Path.Combine(d,"evil.zip"); using(var zip=ZipFile.Open(p,ZipArchiveMode.Create)) { using var w=new StreamWriter(zip.CreateEntry("../outside.txt").Open()); w.Write("bad"); } await s.ProcessAsync(p,true,default); Assert(File.Exists(p) && e.Extracts==0 && s.State.History[0].Status=="실패"); });

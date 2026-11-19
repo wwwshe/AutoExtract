@@ -1,5 +1,7 @@
 using System.Collections.Concurrent;
 using System.IO.Compression;
+using System.Security.AccessControl;
+using System.Security.Principal;
 
 namespace AutoExtract.Core;
 
@@ -289,8 +291,58 @@ public sealed class ArchiveExtractionService
         for (int index = 1; ; index++)
         {
             var dest = Path.Combine(parent, index == 1 ? name : $"{name} ({index})");
-            try { Directory.Move(payload, dest); return dest; }
-            catch (IOException) when (File.Exists(dest) || Directory.Exists(dest)) { }
+            try { Directory.Move(payload, dest); }
+            catch (IOException) when (File.Exists(dest) || Directory.Exists(dest)) { continue; }
+            try
+            {
+                NormalizeOutputPermissions(dest);
+                return dest;
+            }
+            catch
+            {
+                // Do not publish a success or recycle originals if ACL repair fails.
+                Directory.Move(dest, payload);
+                throw;
+            }
+        }
+    }
+    private static void NormalizeOutputPermissions(string root)
+    {
+        using var identity = WindowsIdentity.GetCurrent();
+        var user = identity.User ?? throw new IOException("현재 사용자 SID를 확인할 수 없습니다.");
+        var directories = new Stack<string>();
+        directories.Push(root);
+        while (directories.TryPop(out var path))
+        {
+            ArchiveDetectionService.RejectReparseAncestors(path);
+            Reset(new DirectoryInfo(path), path == root);
+            foreach (var entry in Directory.EnumerateFileSystemEntries(path))
+            {
+                var attributes = File.GetAttributes(entry);
+                if ((attributes & FileAttributes.ReparsePoint) != 0) throw new IOException("권한 정리 중 링크 항목을 발견했습니다.");
+                if ((attributes & FileAttributes.Directory) != 0) directories.Push(entry);
+                else Reset(new FileInfo(entry), false);
+            }
+        }
+
+        void Reset(FileSystemInfo entry, bool isRoot)
+        {
+            // Discard extraction-specific explicit ACEs and recalculate inheritance
+            // from the final parent, rather than retaining the worker's temporary SID.
+            FileSystemSecurity acl = entry is DirectoryInfo directory
+                ? directory.GetAccessControl(AccessControlSections.Access)
+                : ((FileInfo)entry).GetAccessControl(AccessControlSections.Access);
+            acl.SetAccessRuleProtection(false, false);
+            foreach (FileSystemAccessRule rule in acl.GetAccessRules(true, false, typeof(SecurityIdentifier)))
+                acl.RemoveAccessRuleSpecific(rule);
+            if (isRoot)
+                acl.AddAccessRule(new FileSystemAccessRule(user, FileSystemRights.Modify,
+                    InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit,
+                    PropagationFlags.None, AccessControlType.Allow));
+            acl.SetOwner(user);
+            if (entry is DirectoryInfo dir) dir.SetAccessControl((DirectorySecurity)acl);
+            else ((FileInfo)entry).SetAccessControl((FileSecurity)acl);
+            OutputIntegrity.SetMedium(entry.FullName);
         }
     }
     private static void PreflightZip(string path)

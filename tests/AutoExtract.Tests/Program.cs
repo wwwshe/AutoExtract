@@ -1,6 +1,14 @@
 using AutoExtract.Core;
 using System.IO.Compression;
+using System.Security.AccessControl;
+using System.Security.Principal;
+using System.Runtime.InteropServices;
 
+if (args.Length == 2 && args[0] == "--output-probe")
+{
+    File.WriteAllText(args[1], "executed");
+    return 0;
+}
 if (args.Length >= 2 && args[0] == "--diagnose-extract")
 {
     var workspace = Path.Combine(Directory.GetCurrentDirectory(), "artifacts", "diagnostics", Guid.NewGuid().ToString("N"));
@@ -224,6 +232,54 @@ await Test("제한 프로세스는 payload 쓰기만 허용하고 입력 변경 
     await RestrictedProcess.RunAsync(Path.Combine(Environment.SystemDirectory,"cmd.exe"),["/d","/c",script],workspace,default,writableDirectory:payload);
     Assert(File.ReadAllText(original)=="original" && File.ReadAllText(result).Trim()=="result");
 });
+await Test("결과물의 격리 SID 제거 / 사용자 권한 및 상속 / 수정 이름변경 삭제", async d =>
+{
+    var workspace = Path.Combine(d, "work");
+    var payload = Path.Combine(workspace, "payload");
+    var nested = Path.Combine(payload, "nested"); Directory.CreateDirectory(nested);
+    var tool = Path.Combine(workspace, "tool"); Directory.CreateDirectory(tool);
+    foreach (var source in Directory.EnumerateFiles(AppContext.BaseDirectory))
+        File.Copy(source, Path.Combine(tool, Path.GetFileName(source)));
+    var script = Path.Combine(workspace, "probe.cmd");
+    File.WriteAllText(script, $"@echo off\r\necho result>\"{Path.Combine(nested, "result.txt")}\"\r\ncopy /y \"{tool}\\*\" \"{nested}\\\"\r\n");
+    var exit = await RestrictedProcess.RunAsync(Path.Combine(Environment.SystemDirectory, "cmd.exe"),
+        ["/d", "/c", script], workspace, default, writableDirectory: payload);
+    Assert(exit == 0);
+    var before = new DirectoryInfo(payload).GetAccessControl();
+    Assert(before.GetAccessRules(true, true, typeof(SecurityIdentifier)).Cast<FileSystemAccessRule>()
+        .Any(r => r.IdentityReference.Value.StartsWith("S-1-15-2-")), "worker ACL missing in test setup");
+    var exeName = Path.GetFileName(Environment.ProcessPath!);
+    Assert(await HasIntegrity(Path.Combine(nested, exeName), "S-1-16-4096"), "Low EXE missing in test setup");
+    var output = ArchiveExtractionService.Publish(payload, d, "published");
+    using var identity = WindowsIdentity.GetCurrent();
+    foreach (var path in new[] { output }.Concat(Directory.EnumerateFileSystemEntries(output, "*", SearchOption.AllDirectories)))
+    {
+        FileSystemSecurity acl = Directory.Exists(path) ? new DirectoryInfo(path).GetAccessControl() : new FileInfo(path).GetAccessControl();
+        var rules = acl.GetAccessRules(true, true, typeof(SecurityIdentifier)).Cast<FileSystemAccessRule>().ToArray();
+        Assert(!acl.AreAccessRulesProtected, path);
+        Assert(!rules.Any(r => r.IdentityReference.Value.StartsWith("S-1-15-2-")), "worker SID remains: " + path);
+        Assert(rules.Any(r => r.IdentityReference.Equals(identity.User) && r.AccessControlType == AccessControlType.Allow
+            && (r.FileSystemRights & FileSystemRights.Modify) == FileSystemRights.Modify), "user Modify missing: " + path);
+        Assert(rules.Any(r => r.IsInherited), "parent inheritance missing: " + path);
+        Assert(acl.GetOwner(typeof(SecurityIdentifier))?.Equals(identity.User) == true, "owner: " + path);
+        Assert(await HasIntegrity(path, "S-1-16-8192"), "Medium integrity missing: " + path);
+    }
+    var start = new System.Diagnostics.ProcessStartInfo(Path.Combine(output, "nested", exeName))
+        { UseShellExecute = false, CreateNoWindow = true };
+    start.ArgumentList.Add("--output-probe");
+    start.ArgumentList.Add(Path.Combine(output, "executed.txt"));
+    using (var process = System.Diagnostics.Process.Start(start)!)
+    {
+        await process.WaitForExitAsync();
+        Assert(process.ExitCode == 0 && File.ReadAllText(Path.Combine(output, "executed.txt")).Trim() == "executed", "published EXE execution failed");
+    }
+    var file = Path.Combine(output, "nested", "result.txt");
+    File.AppendAllText(file, "edited");
+    var renamed = file + ".renamed"; File.Move(file, renamed); File.Delete(renamed);
+    Directory.Delete(output, true);
+
+    Task<bool> HasIntegrity(string path, string sid) => Task.FromResult(IntegrityProbe.HasLabel(path, sid));
+});
 await Test("정상 완료 후 원본 유지 모드에서도 임시 루트 전체 정리", async d =>
 {
     var(s,_,_,_)=Setup(d); var p=Zip(d); await s.ProcessAsync(p,false,default);
@@ -325,4 +381,31 @@ sealed class FakeEngine : IArchiveEngine
     public int Tests, Extracts, Delay; public bool FailTest, FailExtract; public Action? OnTest; public Action<string>? OnExtract;
     public async Task TestAsync(string path,string workspace,CancellationToken token) { Interlocked.Increment(ref Tests); OnTest?.Invoke(); if(Delay>0) await Task.Delay(Delay,token); if(FailTest) throw new InvalidDataException("simulated bad archive"); using var zip=ZipFile.OpenRead(path); foreach(var e in zip.Entries) { using var s=e.Open(); await s.CopyToAsync(Stream.Null,token); } }
     public Task ExtractAsync(string path,string destination,string workspace,CancellationToken token) { Interlocked.Increment(ref Extracts); if(FailExtract) throw new IOException("simulated disk full"); ZipFile.ExtractToDirectory(path,destination); OnExtract?.Invoke(path); return Task.CompletedTask; }
+}
+
+static class IntegrityProbe
+{
+    public static bool HasLabel(string path, string sid)
+    {
+        var error = GetNamedSecurityInfo(path, 1, 0x10, out _, out _, out _, out var sacl, out var descriptor);
+        if (error != 0) throw new System.ComponentModel.Win32Exception((int)error);
+        try
+        {
+            if (sacl == IntPtr.Zero) return false;
+            var count = (ushort)Marshal.ReadInt16(sacl, 4);
+            var ace = IntPtr.Add(sacl, 8);
+            for (var index = 0; index < count; index++)
+            {
+                if (Marshal.ReadByte(ace) == 0x11 && new SecurityIdentifier(IntPtr.Add(ace, 8)).Value == sid) return true;
+                ace = IntPtr.Add(ace, (ushort)Marshal.ReadInt16(ace, 2));
+            }
+            return false;
+        }
+        finally { LocalFree(descriptor); }
+    }
+    [DllImport("advapi32.dll", CharSet = CharSet.Unicode)]
+    private static extern uint GetNamedSecurityInfo(string path, uint type, uint information,
+        out IntPtr owner, out IntPtr group, out IntPtr dacl, out IntPtr sacl, out IntPtr descriptor);
+    [DllImport("kernel32.dll")]
+    private static extern IntPtr LocalFree(IntPtr memory);
 }
